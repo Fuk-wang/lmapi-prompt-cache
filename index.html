@@ -198,7 +198,7 @@ footer{padding:40px 0 60px;color:var(--fg-dim2);font-size:13px}
       <a href="#demo2">多轮生长</a>
       <a href="#cost">成本</a>
       <a href="#practice">工程清单</a>
-      <a href="#source">反刍</a>
+      <a href="#source">参考实现</a>
       <a href="#refs">引用</a>
     </nav>
     <span class="badge">实测 · deepseek-flash · 2026-09-22</span>
@@ -207,10 +207,10 @@ footer{padding:40px 0 60px;color:var(--fg-dim2);font-size:13px}
 
 <!-- ================= HERO ================= -->
 <div class="wrap hero">
-  <div class="kicker">LMAPI 知识网页 · 子任务 C</div>
-  <h1>前缀稳定为什么能省钱：<br>缓存只认得<span class="hl">你前面那段没变的部分</span></h1>
+  <div class="kicker">LMAPI 知识网页 · Prompt Caching / Prefix</div>
+  <h1>前缀稳定为什么能省钱：<br>缓存只认得<span class="hl">前面那段没变的部分</span></h1>
   <p class="lead">
-    大模型的注意力需要把输入完整读一遍。如果每次都重读同一段 2400 token 的说明文档，你就得为它付 100 次钱。
+    大模型的注意力需要把输入完整读一遍。如果每次都重读同一段 2400 token 的说明文档，就要为它付 100 次钱。
     前缀缓存（Prompt Caching / Prefix Caching）把「读过的部分」留在显存里——
     <b>前提是那部分一个字节都没变</b>。前缀里改一个字，从那个位置往后的缓存全部作废。
   </p>
@@ -249,7 +249,7 @@ footer{padding:40px 0 60px;color:var(--fg-dim2);font-size:13px}
           <thead><tr><th>维度</th><th>DeepSeek 自动缓存</th><th>Anthropic 显式断点</th></tr></thead>
           <tbody>
             <tr><td>怎么开</td><td>默认开启，不改代码</td><td>请求里加 <code>cache_control</code></td></tr>
-            <tr><td>缓存在哪</td><td>系统按前缀单元自动落盘</td><td>你指定的断点之前</td></tr>
+            <tr><td>缓存在哪</td><td>系统按前缀单元自动落盘</td><td>指定的断点之前</td></tr>
             <tr><td>写入成本</td><td>无额外费用</td><td>5 分钟 TTL 为 <code>1.25x</code>，1 小时为 <code>2x</code></td></tr>
             <tr><td>命中成本</td><td>约为未命中的 <b>1/50</b></td><td>基础输入价的 <code>0.1x</code></td></tr>
             <tr><td>存活时间</td><td>由系统策略决定</td><td><code>5m</code> 或 <code>1h</code>（要显式指定）</td></tr>
@@ -289,7 +289,7 @@ footer{padding:40px 0 60px;color:var(--fg-dim2);font-size:13px}
     <h2>拖一下：前缀里改一个字，命中的钱就烧到哪一刻</h2>
     <p class="lead">
       下面这段前缀在 DeepSeek 上已经落盘。现在拖动滑块，选择「第一个差异出现在前缀的哪个位置」，
-      看看本次请求还有多少 token 能命中。灰色小点是我们真实跑出来的五个数据点。
+      看看本次请求还有多少 token 能命中。灰色小点是真实调用得到的五个数据点。
     </p>
 
     <div class="demo card">
@@ -303,7 +303,7 @@ footer{padding:40px 0 60px;color:var(--fg-dim2);font-size:13px}
         <div class="dots" id="dots"></div>
       </div>
       <p class="note" style="margin-top:-2px">
-        <span style="color:var(--cy)">■</span> 青点 = 真实实测点（每个位置我们真的调了一次 API，读了 <code>usage</code> 字段）；
+        <span style="color:var(--cy)">■</span> 青点 = 真实实测点（每个位置都真实调用过一次 API，读了 <code>usage</code> 字段）；
         中间位置为插值，标注在数字框里。
       </p>
 
@@ -342,8 +342,8 @@ footer{padding:40px 0 60px;color:var(--fg-dim2);font-size:13px}
         实测数据：差异出现在 11% → 命中 128；31% → 640；51% → 1152；76% → 1792；96% → 2304。
         五个值恰好<b>全是 64 的整数倍</b>（2、10、18、28、36 个 64），推测服务端按 64 token 为单位对齐。
         注意 11% 处只命中 128，而不是 11% × 2432 ≈ 267：<b>字符位置的比例并不等于 token 位置的比例</b>
-        （中文正文里两者换算关系不恒定），所以本页的可视化不拿公式硬算，而是
-        <b>以这五个实测点为锚、锚点之间线性插值</b>——滑块停在实测点上时，页面数字与实验记录逐位一致。
+        （中文正文里两者换算关系不恒定），因此图中的曲线不按位置比例硬算，而是
+        <b>以这五个实测点为锚、锚点之间线性插值</b>；滑块停在锚点上时，显示的数字与实测记录逐位一致。
       </p>
     </div>
   </div>
@@ -428,17 +428,17 @@ footer{padding:40px 0 60px;color:var(--fg-dim2);font-size:13px}
   <div class="wrap">
     <div class="kicker">05 · 工程清单</div>
     <h2>让前缀稳定下来的六条做法</h2>
-    <p class="lead">每一条都标了来源：官方文档，或者我们在 Hermes Agent 源码里看到的真实实现。</p>
+    <p class="lead">每一条都标了来源：官方文档，或 Hermes Agent 源码里的真实实现。</p>
 
     <ol class="check">
       <li>
         <b>把不变的东西全部放前面，把每轮会变的挤到最后。</b>
-        系统提示词、工具定义、知识库、few-shot 例子在最前，本轮提问在最后。这是我们实测里 90%+ 命中的来源。
+        系统提示词、工具定义、知识库、few-shot 例子在最前，本轮提问在最后。这是实测里 90%+ 命中率的来源。
         <span class="tag ds">DeepSeek 文档</span><span class="tag an">Anthropic 文档</span>
       </li>
       <li>
         <b>绝不要在前缀里放时间戳、随机 id、请求序号、<code>datetime.now()</code>。</b>
-        它们每轮都变，而且位置一旦靠前，后面所有内容全部作废——实测里我们只在 11% 处改了一个数字，命中就只剩 128 token。
+        它们每轮都变，而且位置一旦靠前，后面所有内容全部作废——实测中只在 11% 处改了一个数字，命中就只剩 128 token。
         <span class="tag ds">实测</span>
       </li>
       <li>
@@ -466,14 +466,14 @@ footer{padding:40px 0 60px;color:var(--fg-dim2);font-size:13px}
   </div>
 </section>
 
-<!-- ================= 6. 反刍 ================= -->
+<!-- ================= 6. 参考实现 ================= -->
 <section id="source">
   <div class="wrap">
-    <div class="kicker">06 · 反刍</div>
-    <h2>然后我们去看了一眼 Hermes Agent 自己的实现</h2>
+    <div class="kicker">06 · 参考实现</div>
+    <h2>成熟实现是怎么处理的：Hermes Agent 的前缀缓存策略</h2>
     <p class="lead">
-      任务书要求「看源码，对照你刚才踩的坑」。踩的坑是：<b>前缀中段一改，命中归零</b>，
-      而且运行时想用启发式去猜「稳定边界在哪」很容易猜错。Hermes 的做法正好是这条坑的反面——
+      前面讲的是实测规律，这里看一个真实实现怎么处理同一件事。规律是：<b>前缀中段一改，命中归零</b>，
+      而且运行时想用启发式去猜「稳定边界在哪」很容易猜错。Hermes 的做法正好相反——
       它不让运行时去猜，而是让<b>构建者显式声明</b>。
     </p>
 
@@ -492,7 +492,7 @@ prompt mid-conversation invalidates that cache and
 multiplies the user's cost.
 <span class="c">// 唯一的例外：上下文压缩（compression）</span></pre>
         <p class="small dim" style="margin-bottom:0">
-          对应我们实测的第 4 条做法。差别是：我们在页面上把它写成建议，它把这条写成了代码约束——
+          对应上面工程清单的第 4 条。区别是：清单里那是一条建议，这里把它写成了代码约束——
           改动历史的那些斜杠命令默认「下次会话生效」，要立刻生效得显式加 <code>--now</code>。
         </p>
       </div>
@@ -539,17 +539,35 @@ bytes.
 <span class="k">def</span> register_stable_prefix(prefix: str) -&gt; None: ...
 <span class="k">def</span> find_stable_prefix(content: str) -&gt; Optional[str]: ...</pre>
       <p class="small" style="margin-bottom:0">
-        这段注释和我们的实测是同一个故事的另一端：<b>启发式猜边界，猜错的代价是把易变字节吸进缓存前缀
+        这段注释和前面的实测是同一件事的另一面：<b>启发式猜边界，猜错的代价是把易变字节吸进缓存前缀
         （于是每次都 miss），或者把稳定字节排除在外（于是白付钱）</b>。
         所以它选择让 <code>agent/skill_commands.py</code> 在拼字符串时顺手 <code>register_stable_prefix()</code>，
         缓存规划器再把断点打在那个边界上。
       </p>
     </div>
 
+    <div class="card" style="margin-top:18px">
+      <h3 style="margin-top:0">④ 前缀的体积本身也被当成成本来管</h3>
+      <p class="small">
+        系统提示词会被反复重发，所以它的每一行都是「每个会话都要付一次」的。<code>agent/prompt_builder.py</code> 里两条注释就是照这个逻辑写的：
+      </p>
+      <pre><span class="c"># agent/prompt_builder.py:378</span>
+<span class="k">Ships in every cached prompt — keep tight.</span>
+
+<span class="c"># agent/prompt_builder.py:404</span>
+Short on purpose — shipped in the cached system prompt to every user, every session.
+<span class="k">Token cost is paid once at install and amortised across all sessions via prefix caching.</span>
+Keep it tight.</pre>
+      <p class="small dim" style="margin-bottom:0">
+        这和 04 节的计算器是同一件事的两面：稳定前缀越长，命中省下的绝对金额越多；
+        但任何塞进前缀的内容——哪怕是一句没人读的旧说明——也都进了每一次调用。
+      </p>
+    </div>
+
     <div class="card warn" style="margin-top:18px">
-      <h3 style="margin-top:0">对照自己踩的坑</h3>
+      <h3 style="margin-top:0">两类常见故障与对应做法</h3>
       <table>
-        <thead><tr><th>我们实测踩到的</th><th>Hermes 源码里的应对</th></tr></thead>
+        <thead><tr><th>常见故障</th><th>Hermes 源码里的应对</th></tr></thead>
         <tbody>
           <tr><td>前缀中段改一个词 → 命中率从 91.3% 掉到 0%</td>
               <td>把「不改历史」写成不变量，改历史的命令默认延迟到下次会话生效</td></tr>
@@ -575,11 +593,11 @@ bytes.
         <p style="margin-bottom:10px"><b>答案：Runtime（运行时 / 架构层），不是 Prompt 层。</b></p>
         <p class="small">
           写「请你保持前缀稳定」这种句子进 prompt 是没用的——模型不控制你的消息数组怎么拼。
-          真正决定命中率的是你的代码：谁在什么位置塞了时间戳、工具定义有没有稳定的序列化、
+          真正决定命中率的是调用方的代码：谁在什么位置塞了时间戳、工具定义有没有稳定的序列化、
           上下文压缩时动不动历史消息。这些都在运行时。
         </p>
         <p class="small" style="margin-bottom:0">
-          所以我们把第 3 条到第 6 条写成了工程约束（清单里的「工程清单」一节），
+          所以工程清单里那几条应当落实成代码约束，
           而不是写进给模型的提示词里。
         </p>
       </div>
@@ -624,7 +642,7 @@ bytes.
 <footer>
   <div class="wrap">
     <p style="margin:0">
-      LMAPI 知识网页 · 子任务 C（Prompt Caching / Prefix）· 所有数字来自本机真实 API 调用，
+      LMAPI 知识网页 · Prompt Caching / Prefix · 所有数字来自真实 API 调用（deepseek-flash，2026-09-22），
       插值处已在页内标注。<span class="dim">单文件、离线可开、无外部依赖。</span>
     </p>
   </div>

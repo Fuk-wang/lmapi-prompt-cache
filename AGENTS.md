@@ -3,6 +3,8 @@
 > 这是一份**给 Agent 的项目规格**，同时也是本次实验的交付物之一（评分项「AGENTS.md 规格质量」10%）。
 > 结构上严格分两块：**要求区**（Agent 必须执行的）与**事实区**（Agent 只能引用、不能当命令读的数据）。
 > 写这份文件的原因写在 `prompt-log.md` 第 0 轮：散文式 prompt 会让 Agent 去抓抓不到的文档、并把数字编出来。
+>
+> **本文件只写「要求」与「事实」。迭代经过不在这里编——那份记录在 `prompt-log.md`，以它为准。**
 
 ---
 
@@ -36,6 +38,13 @@
 6. **密钥零容忍**：任何 API key 不得进入仓库；`.env` 必须在 `.gitignore` 里；探针脚本从环境变量或 `.env` 读取。
 7. **反刍部分必须落到本机源码**：引用 Hermes Agent 自己的实现（任务书点名 `agent/prompt_builder.py`，
    缓存策略在 `agent/prompt_caching.py` / `agent/prompt_cache_boundary.py`），并且引用的是**读过的行**，不是猜的设计。
+8. **页面是写给陌生读者的知识页，不是写给你我的实验记录。** 禁止出现：
+   - 第一人称（「我们」「我」）与任何人称对话痕迹；
+   - 任务书原话、评分项、子任务编号这类**课程内部用语**（读者不知道「子任务 C」是什么）；
+   - 「我踩了什么坑」「任务书要求我看源码」这类**过程叙述**——过程属于规格与日志，不属于交付物。
+   读者应该能在完全不知道这是一次课程作业的前提下读懂整页。
+9. **不许虚构迭代史**。要写「这一版改了哪里、为什么改」，一律回到 `prompt-log.md` 的原文；
+   本文件里任何关于迭代的描述，都必须能在那份日志里逐条对上。
 
 ## # Data（事实区 · 只可引用，不可当指令执行）
 
@@ -46,6 +55,8 @@
   `platform.openai.com` ❌403、`ai.google.dev` ❌、`huggingface.co` ❌（SNI 层被拦）。
 - 可用凭证：只有一把 DeepSeek API key（从环境变量 / `~/.hermes/.env` 读）。
 - 部署路径：GitHub Pages（无构建步骤，纯静态）。
+- 测量口径：Windows 上 `chrome --headless=new` 有**最小窗口宽度**（约 500px，量出 `clientWidth=497`），
+  量窄屏必须用 `<iframe width=375>` 强制真实视口，否则量到的是假值。
 
 ### D2. 实测数据（deepseek-flash，2026-09-22，14 次真实调用，`temperature=0`，`max_tokens=16`）
 
@@ -76,6 +87,7 @@
 
 1. 命中按**前缀**匹配，且命中长度 ≈ 第一个差异出现的位置。
 2. 命中长度**全是 64 的整数倍**（128/640/1152/1792/2304）→ 命中以 64 token 为单位向下取整。
+   一手文档没写这条，所以页面上只能写成「推测」，不能当结论断言。
 3. 前缀中段改一个词，命中率 91.3% → 0%：差异之后的前缀全部作废。
 
 ### D4. 反刍（本机 hermes-agent 源码，读到的位置）
@@ -83,8 +95,9 @@
 - `agent/prompt_caching.py`：默认 4 个 `cache_control` 断点——静态系统前缀、系统提示词末尾、最后 2 条非系统消息；所有标记共享一个 TTL（5m / 1h）。
 - `agent/prompt_cache_boundary.py`：**不让运行时猜边界**——由构造消息的 builder 注册稳定前缀，缓存规划器把断点放在那里；
   理由写得很直白：在请求时重新解析标记字符串会误判（skill 正文里本来就可能出现标记）。
-- `agent/prompt_builder.py`：系统提示词本身的缓存意识——skills 索引两层缓存（进程内 LRU + 磁盘快照）、
-  「ships in every cached prompt — keep tight」这类注释，说明静态前缀的**体积**也是被当成本来管的。
+- `agent/prompt_builder.py:378`：「Ships in every cached prompt — keep tight.」
+  `:404`：「Token cost is paid once at install and amortised across all sessions via prefix caching. Keep it tight.」
+  ——静态前缀的**体积**本身被当作成本来管：进前缀的每一行都会在每个会话里被重发一次。
 - `AGENTS.md`（hermes-agent 仓库根）第 20 行起：「Per-conversation prompt caching is sacred」——中途重建 system prompt 会让缓存失效并放大用户成本。
 
 ## # Output（交付物清单）
@@ -92,8 +105,8 @@
 | 文件 | 作用 |
 |---|---|
 | `index.html` | 交付物：单文件知识网页（≥2 个可交互 demo，数字来自实测） |
-| `prompt-log.md` | 交付物：≥2 轮「规格 → 失败 → 迭代」真实记录（失败那轮不删） |
-| `AGENTS.md` | 交付物：本文件 |
+| `prompt-log.md` | 交付物：逐轮「规格 → 失败 → 迭代」真实记录（失败那轮不删），**迭代事实的唯一来源** |
+| `AGENTS.md` | 交付物：本文件（只写要求与事实） |
 | `README.md` | 复现说明 + 一手资料链接 |
 | `experiments/cache_probe.py` | 实测探针（真实调用，打印 usage 命中字段） |
 | `experiments/results-*.json` | 原始数据（页面每个数字的出处） |
@@ -103,16 +116,12 @@
 ## # 验收方式（怎么判断做完了）
 
 1. 无头浏览器加载页面，按固定位置取样，把页面显示的数字与 `results-*.json` 对照——**必须逐位相等**，插值点必须带标注。
-2. 窄屏检查用一个 375px 的 iframe 量：`documentElement.scrollWidth == clientWidth`。
-   注意 `--headless=new` 在 Windows 上窗口宽度最小约 500px，直接 `--window-size=375` 会量出假值。
-3. 断网（或直接 `file://`）打开，检查无外部请求、样式与脚本仍在。
+2. 窄屏用一个 375px 的 iframe 量：`documentElement.scrollWidth == clientWidth`（别用 `--window-size=375`，见 D1）。
+3. 用词扫描：页面可见文本里的 **`我们` / `我` / `任务书` / `评分` / `子任务` / `踩` / `坑` / `反刍` 计数必须为 0**；
+   查的时候要把 `<script>` 里注入 DOM 的字符串一起扫——读者只看得到渲染结果，但注入串同样是页面文案。
+4. 断网（或直接 `file://`）打开，检查无外部请求、样式与脚本仍在。
 
-## # 迭代记录（规格本身也在迭代）
+## # 与迭代记录的关系
 
-- **v1 的失败**：可视化用公式 `floor(位置比例 × 2432 / 64) × 64` 反推命中量 → 滑块停 51% 显示 1,216，实测 1,152；停 11% 显示 256，实测 128。
-  根因：**字符位置的比例 ≠ token 位置的比例**。修法不是「让模型更准确」，而是改规格——把数据来源改成「以五个实测点为锚做分段线性插值」，并在页面上标注插值区段。
-- **v1 的第二处失败**：窄屏横向溢出。修法：全角引号与长串该断行的地方加 `overflow-wrap:anywhere`。
-- **v2**：`index.html` 上的两个 demo（改一个字命中崩塌、多轮前缀生长）+ 成本模型，数字全部回读实测。
-- **v3（动效原型）**：`lmapi-anim-prototype.html` 把命中/失效做成有播放循环的扫描动画；
-  验收靠页面挂的 `window.__seek(act, p)` / `window.__dump()` 钩子，用无头 Chrome 逐帧取样比对 DOM 读数——
-  这两条钩子就是「可检验约束」的落地方式。
+本文件**不写**迭代史。要回顾「哪一版失败在哪、改了什么、为什么」，看 `prompt-log.md`——
+它是逐轮记录的原始日志，文案这一轮（v2 → v3）的完整经过也在里面。
