@@ -5,7 +5,7 @@
 
 - 子任务：C（Prompt Caching / Prefix）
 - 课程：大模型与自然语言处理 · 第 2 次课实验（20260922）
-- 线上地址：见仓库 Settings → Pages，或 <https://fuk-wang.github.io/lmapi-prompt-cache/>
+- 线上地址（GitHub Pages，已上线）：<https://fuk-wang.github.io/lmapi-prompt-cache/>
 - 实测模型：`deepseek-flash`　实测日期：2026-09-22
 
 ## 这个网页在讲什么
