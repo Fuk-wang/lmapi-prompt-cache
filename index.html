@@ -1,0 +1,890 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>前缀稳定为什么能省钱 · Prompt Caching 实测</title>
+<meta name="description" content="用真实的 API 调用数据讲清 Prompt Caching / Prefix：缓存按前缀匹配，改一个字命中就从那个位置起全部作废。含可交互的命中崩塌模拟与成本计算器。">
+<style>
+/* ============ 基础与主题 ============ */
+:root{
+  --bg:#05070c; --bg-2:#080b14; --panel:#0b101d; --panel-2:#0e1526;
+  --line:#1b2438; --line-2:#27324b;
+  --fg:#e8eefc; --fg-dim:#9aa8c4; --fg-dim2:#6b7a99;
+  --cy:#3ef0ff; --vi:#8b5cf6; --gr:#22d3a5; --or:#ffa53e; --rd:#ff5c7a;
+  --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace;
+  --sans:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+  --maxw:1180px;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{
+  margin:0;background:var(--bg);color:var(--fg);font-family:var(--sans);
+  line-height:1.75;-webkit-font-smoothing:antialiased;
+  background-image:
+    radial-gradient(1100px 600px at 12% -8%,rgba(62,240,255,.10),transparent 60%),
+    radial-gradient(900px 520px at 88% 4%,rgba(139,92,246,.12),transparent 60%),
+    linear-gradient(180deg,var(--bg) 0%,var(--bg-2) 100%);
+  background-attachment:fixed;
+}
+a{color:var(--cy);text-decoration:none;border-bottom:1px dashed rgba(62,240,255,.35)}
+a:hover{border-bottom-style:solid}
+code,.mono{font-family:var(--mono)}
+.wrap{max-width:var(--maxw);margin:0 auto;padding:0 22px}
+
+/* ============ 顶栏 ============ */
+header.top{
+  position:sticky;top:0;z-index:40;backdrop-filter:blur(12px);
+  background:rgba(5,7,12,.82);border-bottom:1px solid var(--line);
+}
+.top .wrap{display:flex;align-items:center;gap:18px;height:58px}
+.brand{display:flex;align-items:center;gap:10px;font-weight:700;letter-spacing:.3px}
+.brand .dot{width:22px;height:22px;border-radius:6px;background:linear-gradient(135deg,var(--cy),var(--vi));
+  box-shadow:0 0 18px rgba(62,240,255,.45)}
+nav.links{display:flex;gap:20px;margin-left:auto;font-size:14px}
+nav.links a{color:var(--fg-dim);border:0}
+nav.links a:hover{color:var(--cy)}
+.badge{font-family:var(--mono);font-size:11px;color:var(--cy);border:1px solid rgba(62,240,255,.35);
+  padding:3px 9px;border-radius:999px;background:rgba(62,240,255,.07);white-space:nowrap}
+@media(max-width:860px){nav.links{display:none}}
+/* —— 小屏防溢出（v2 修：375px 下顶栏徽章会把页面撑宽）—— */
+@media(max-width:820px){
+  .badge{display:none}
+  .top .wrap{gap:10px}
+}
+img,svg,pre{max-width:100%}
+table{max-width:100%}
+@media(max-width:760px){
+  table{font-size:13px}
+  th,td{padding:9px 7px;overflow-wrap:anywhere}
+  /* v2 修：窄屏下 3~4 列表格的最小宽度会撑破卡片（iframe 实测 375px 时 scrollWidth=487），
+     改成可横向滚动的块；表格内部结构不变，只是允许手指左右拖 */
+  .card table{display:block;overflow-x:auto;-webkit-overflow-scrolling:touch}
+  .numrow{grid-template-columns:1fr 1fr}
+  .cursorline{margin-top:10px}
+  .prefixviz .body{max-height:150px}
+}
+/* —— 第 2 个 demo 的按钮（v2 修：原来靠 JS 注入样式，首屏会闪一下没样式的按钮）—— */
+.tabbtn{font:inherit;font-size:13.5px;color:var(--fg-dim);background:rgba(11,16,29,.9);
+  border:1px solid var(--line-2);border-radius:9px;padding:8px 14px;cursor:pointer;transition:.15s}
+.tabbtn:hover{color:var(--fg);border-color:var(--cy)}
+.tabbtn.on{color:#04121a;background:linear-gradient(135deg,var(--cy),var(--gr));border-color:transparent;font-weight:600}
+
+/* ============ 通用块 ============ */
+section{padding:74px 0;border-bottom:1px solid rgba(27,36,56,.7)}
+section:last-of-type{border-bottom:0}
+.kicker{font-family:var(--mono);font-size:12px;letter-spacing:.22em;color:var(--cy);text-transform:uppercase;margin-bottom:14px}
+h1{font-size:clamp(30px,5.2vw,54px);line-height:1.14;margin:0 0 18px;letter-spacing:-.5px}
+h2{font-size:clamp(23px,3.1vw,32px);line-height:1.3;margin:0 0 14px;letter-spacing:-.3px}
+h3{font-size:17px;margin:26px 0 10px}
+p{color:#cbd6ea;margin:0 0 16px}
+.lead{font-size:clamp(16px,1.9vw,19px);color:#c3cfe6;max-width:74ch}
+.dim{color:var(--fg-dim)}
+.small{font-size:13px}
+.card{background:linear-gradient(180deg,var(--panel),var(--panel-2));border:1px solid var(--line);
+  border-radius:14px;padding:22px}
+.grid{display:grid;gap:18px}
+.g2{grid-template-columns:1fr 1fr}
+.g3{grid-template-columns:repeat(3,1fr)}
+/* v2 修（关键一条）：Grid 子项默认 min-width:auto，会被内部宽内容（表格 / pre / 长代码行）
+   撑破容器——实测 375px 下卡片被顶到 397 宽、整页 scrollWidth 487。加上 min-width:0 后，
+   子项才能收缩到容器宽度，内部再由表格自己横向滚动。 */
+.grid > *,.stats > *,.numrow > *{min-width:0}
+@media(max-width:900px){.g2,.g3{grid-template-columns:1fr}}
+
+/* ============ Hero ============ */
+.hero{padding:80px 0 60px}
+.chips{display:flex;flex-wrap:wrap;gap:12px;margin:26px 0 30px}
+.chip{font-family:var(--mono);font-size:12.5px;color:var(--fg-dim);border:1px solid var(--line-2);
+  border-radius:10px;padding:9px 13px;background:rgba(11,16,29,.7)}
+.chip b{color:var(--fg);font-weight:600}
+.chip.g b{color:var(--gr)} .chip.c b{color:var(--cy)} .chip.v b{color:var(--vi)}
+.hl{color:var(--fg);background:linear-gradient(180deg,transparent 62%,rgba(62,240,255,.28) 62%)}
+.hl-r{color:var(--fg);background:linear-gradient(180deg,transparent 62%,rgba(255,92,122,.3) 62%)}
+
+/* ============ 数字看板 ============ */
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-top:8px}
+@media(max-width:900px){.stats{grid-template-columns:1fr 1fr}}
+.stat{background:rgba(11,16,29,.8);border:1px solid var(--line);border-radius:12px;padding:16px}
+.stat .n{font-family:var(--mono);font-size:26px;font-weight:600;letter-spacing:-.5px}
+.stat .k{font-size:12.5px;color:var(--fg-dim2);margin-top:2px}
+.stat.c .n{color:var(--cy)} .stat.g .n{color:var(--gr)}
+.stat.r .n{color:var(--rd)} .stat.v .n{color:var(--vi)}
+
+/* ============ 前缀示意 ============ */
+.blocks{display:flex;align-items:stretch;gap:8px;margin:22px 0;flex-wrap:wrap}
+.blk{border-radius:10px;padding:14px 14px;font-size:13px;border:1px solid var(--line-2);
+  background:rgba(14,21,38,.9);min-width:150px;flex:1}
+.blk .t{font-family:var(--mono);font-size:11px;color:var(--fg-dim2);margin-bottom:6px}
+.blk.ok{border-color:rgba(34,211,165,.55);background:rgba(34,211,165,.08)}
+.blk.bad{border-color:rgba(255,92,122,.5);background:rgba(255,92,122,.08)}
+.blk.vol{border-color:rgba(255,165,62,.5);background:rgba(255,165,62,.08)}
+
+/* ============ 交互：命中崩塌 ============ */
+.demo{margin-top:26px}
+.ctrls{display:flex;flex-wrap:wrap;align-items:center;gap:16px;margin:0 0 18px}
+input[type=range]{-webkit-appearance:none;appearance:none;height:6px;border-radius:999px;flex:1;min-width:240px;
+  background:linear-gradient(90deg,var(--gr) 0%,var(--or) 55%,var(--rd) 100%);outline:none}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:22px;height:22px;border-radius:50%;
+  background:#fff;border:3px solid var(--bg);box-shadow:0 0 0 2px var(--cy),0 0 16px rgba(62,240,255,.7);cursor:pointer}
+input[type=range]::-moz-range-thumb{width:20px;height:20px;border-radius:50%;background:#fff;border:3px solid var(--bg);cursor:pointer}
+.readout{font-family:var(--mono);font-size:13px;color:var(--fg-dim);white-space:nowrap}
+.prefixviz{border:1px solid var(--line);border-radius:12px;overflow:hidden;background:#060912;
+  font-family:var(--mono);font-size:12px;line-height:1.75;padding:0}
+.prefixviz .head{display:flex;justify-content:space-between;padding:9px 13px;background:rgba(14,21,38,.95);
+  border-bottom:1px solid var(--line);font-size:11px;color:var(--fg-dim2);letter-spacing:.04em}
+.prefixviz .body{padding:12px 13px;max-height:190px;overflow:auto;white-space:pre-wrap;word-break:break-all}
+.mark-hit{background:rgba(34,211,165,.22);border-radius:3px;padding:1px 0;color:#d7fff4}
+.mark-bad{background:rgba(255,92,122,.2);border-radius:3px;padding:1px 0;color:#ffd9e1}
+.cursorline{position:relative;height:2px;background:var(--line-2);margin:14px 0 8px;border-radius:2px}
+.cursorline i{position:absolute;top:-5px;width:10px;height:12px;background:var(--cy);border-radius:2px;
+  transform:translateX(-50%);box-shadow:0 0 12px rgba(62,240,255,.8)}
+.cursorline .dots{position:absolute;inset:0}
+.cursorline .dots s{position:absolute;top:-3px;width:6px;height:6px;border-radius:50%;background:var(--fg-dim2);
+  transform:translateX(-50%);text-decoration:none}
+.cursorline .dots s.on{background:var(--cy);box-shadow:0 0 10px var(--cy)}
+.numrow{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-top:16px}
+@media(max-width:760px){.numrow{grid-template-columns:1fr 1fr}}
+.num{background:rgba(11,16,29,.9);border:1px solid var(--line);border-radius:10px;padding:13px}
+.num .k{font-size:12px;color:var(--fg-dim2)}
+.num .v{font-family:var(--mono);font-size:21px;font-weight:600;margin-top:3px}
+.num.g .v{color:var(--gr)} .num.r .v{color:var(--rd)} .num.c .v{color:var(--cy)} .num.o .v{color:var(--or)}
+.bars{margin-top:16px}
+.bar{display:flex;align-items:center;gap:10px;margin:7px 0;font-family:var(--mono);font-size:12px}
+.bar .lbl{width:74px;color:var(--fg-dim2)}
+.bar .track{flex:1;height:14px;background:rgba(27,36,56,.6);border-radius:4px;overflow:hidden}
+.bar .fill{height:100%;border-radius:4px;transition:width .18s ease}
+.bar .val{width:132px;text-align:right;color:var(--fg-dim)}
+
+/* ============ 表格 ============ */
+table{width:100%;border-collapse:collapse;font-size:14px;margin:10px 0}
+th,td{border-bottom:1px solid var(--line);padding:11px 10px;text-align:left;vertical-align:top}
+th{color:var(--fg-dim);font-weight:600;font-size:12.5px;letter-spacing:.03em;text-transform:uppercase}
+td.mono,th.mono{font-family:var(--mono)}
+tr:last-child td{border-bottom:0}
+
+/* ============ 清单 / 引用 ============ */
+ol.check{list-style:none;counter-reset:c;padding:0;margin:0}
+ol.check li{counter-increment:c;position:relative;padding:13px 0 13px 46px;border-bottom:1px solid rgba(27,36,56,.75)}
+ol.check li:last-child{border-bottom:0}
+ol.check li::before{content:counter(c,decimal-leading-zero);position:absolute;left:0;top:12px;
+  font-family:var(--mono);font-size:12px;color:var(--cy);border:1px solid rgba(62,240,255,.3);
+  border-radius:6px;padding:3px 7px;background:rgba(62,240,255,.06)}
+.tag{display:inline-block;font-family:var(--mono);font-size:11px;padding:2px 8px;border-radius:999px;
+  border:1px solid var(--line-2);color:var(--fg-dim);margin-left:6px;white-space:nowrap}
+.tag.ds{color:#8fd9ff;border-color:rgba(62,240,255,.4)}
+.tag.an{color:#d6bcff;border-color:rgba(139,92,246,.45)}
+.tag.he{color:#9df3d8;border-color:rgba(34,211,165,.45)}
+pre{background:#060912;border:1px solid var(--line);border-radius:12px;padding:16px;overflow:auto;
+  font-family:var(--mono);font-size:12.5px;line-height:1.7;color:#cfe0ff}
+pre .c{color:var(--fg-dim2)}
+pre .k{color:var(--cy)} pre .s{color:#9df3d8}
+blockquote{margin:18px 0;padding:14px 18px;border-left:3px solid var(--cy);background:rgba(62,240,255,.05);
+  border-radius:0 10px 10px 0;color:#cbd6ea}
+blockquote p:last-child{margin-bottom:0}
+.note{font-size:13px;color:var(--fg-dim2)}
+footer{padding:40px 0 60px;color:var(--fg-dim2);font-size:13px}
+.warn{border-color:rgba(255,165,62,.45);background:rgba(255,165,62,.06)}
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="wrap">
+    <div class="brand"><span class="dot"></span>Prompt Caching / Prefix</div>
+    <nav class="links">
+      <a href="#what">原理</a>
+      <a href="#demo1">改一个字</a>
+      <a href="#demo2">多轮生长</a>
+      <a href="#cost">成本</a>
+      <a href="#practice">工程清单</a>
+      <a href="#source">反刍</a>
+      <a href="#refs">引用</a>
+    </nav>
+    <span class="badge">实测 · deepseek-flash · 2026-09-22</span>
+  </div>
+</header>
+
+<!-- ================= HERO ================= -->
+<div class="wrap hero">
+  <div class="kicker">LMAPI 知识网页 · 子任务 C</div>
+  <h1>前缀稳定为什么能省钱：<br>缓存只认得<span class="hl">你前面那段没变的部分</span></h1>
+  <p class="lead">
+    大模型的注意力需要把输入完整读一遍。如果每次都重读同一段 2400 token 的说明文档，你就得为它付 100 次钱。
+    前缀缓存（Prompt Caching / Prefix Caching）把「读过的部分」留在显存里——
+    <b>前提是那部分一个字节都没变</b>。前缀里改一个字，从那个位置往后的缓存全部作废。
+  </p>
+  <div class="chips">
+    <span class="chip c">实测调用 <b>14 次</b>（deepseek-flash）</span>
+    <span class="chip g">缓存命中单价是未命中的 <b>1/50</b></span>
+    <span class="chip v">实测命中值均为 <b>64 的整数倍</b></span>
+    <span class="chip">花费 <b>$0.0023</b>（全部实测跑出来）</span>
+  </div>
+  <p class="note">
+    本页所有数字都来自真实 API 调用，原始 JSON 与探针脚本在仓库 <code>experiments/</code> 目录，
+    可照着复现（见页末<a href="#refs">引用与实测环境</a>）。凡属插值或推算的地方，页面都会显式标注。
+  </p>
+</div>
+
+<!-- ================= 1. 原理 ================= -->
+<section id="what">
+  <div class="wrap">
+    <div class="kicker">01 · 原理</div>
+    <h2>缓存匹配是「前缀匹配」，不是「相似匹配」</h2>
+    <p class="lead">
+      服务端把已经算过的 token 序列（KV 缓存）按<b>前缀单元</b>存下来。新请求进来时，从第一个 token 开始逐个比对，
+      一直比到第一个不同的位置为止——<b>那个位置之前的 token 全部命中</b>，之后的全部要重算。
+      没有「部分相似」「语义相同」这种余地。
+    </p>
+
+    <div class="blocks">
+      <div class="blk ok"><div class="t">命中区 / CACHED PREFIX</div>不动的那一段：系统提示词、工具定义、知识库、few-shot 例子</div>
+      <div class="blk vol"><div class="t">易变尾部 / VOLATILE TAIL</div>每轮都在变的那一小段：用户这回的问题</div>
+    </div>
+
+    <div class="grid g2" style="margin-top:26px">
+      <div class="card">
+        <h3 style="margin-top:0">两种流派，规则不一样</h3>
+        <table>
+          <thead><tr><th>维度</th><th>DeepSeek 自动缓存</th><th>Anthropic 显式断点</th></tr></thead>
+          <tbody>
+            <tr><td>怎么开</td><td>默认开启，不改代码</td><td>请求里加 <code>cache_control</code></td></tr>
+            <tr><td>缓存在哪</td><td>系统按前缀单元自动落盘</td><td>你指定的断点之前</td></tr>
+            <tr><td>写入成本</td><td>无额外费用</td><td>5 分钟 TTL 为 <code>1.25x</code>，1 小时为 <code>2x</code></td></tr>
+            <tr><td>命中成本</td><td>约为未命中的 <b>1/50</b></td><td>基础输入价的 <code>0.1x</code></td></tr>
+            <tr><td>存活时间</td><td>由系统策略决定</td><td><code>5m</code> 或 <code>1h</code>（要显式指定）</td></tr>
+          </tbody>
+        </table>
+        <p class="small dim" style="margin-bottom:0">
+          数据来源：<a href="https://api-docs.deepseek.com/zh-cn/guides/kv_cache" target="_blank" rel="noopener">DeepSeek 上下文硬盘缓存</a>、
+          <a href="https://api-docs.deepseek.com/quick_start/pricing" target="_blank" rel="noopener">DeepSeek 定价</a>、
+          <a href="https://docs.claude.com/en/docs/build-with-claude/prompt-caching" target="_blank" rel="noopener">Anthropic Prompt caching</a>。
+        </p>
+      </div>
+
+      <div class="card">
+        <h3 style="margin-top:0">本页实测用的那段前缀长什么样</h3>
+        <p class="small dim">下面就是实测里实际发出去的内容结构（截断了正文，结构不变）：</p>
+        <pre><span class="c"># 稳定前缀（一直不变，实测 2432 token 命中）</span>
+<span class="k">system</span>: 你是一位资深的财报分析师，回答务必简短。
+<span class="k">user</span>  : 【内部资料·财务与渠道分析】
+        第三季度华东区渠道库存周转天数为 47 天……
+        （共 60 条同构段落，约 2400 token）
+        ─────────────────────────────
+<span class="s"># 易变尾部（每轮不同，不命中）</span>
+        请分析这份资料的现金流情况。
+</pre>
+        <p class="small dim" style="margin-bottom:0">
+          <code>temperature=0</code>，<code>max_tokens=16</code>，同步请求。
+        </p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= 2. DEMO 1 ================= -->
+<section id="demo1">
+  <div class="wrap">
+    <div class="kicker">02 · 交互实测</div>
+    <h2>拖一下：前缀里改一个字，命中的钱就烧到哪一刻</h2>
+    <p class="lead">
+      下面这段前缀在 DeepSeek 上已经落盘。现在拖动滑块，选择「第一个差异出现在前缀的哪个位置」，
+      看看本次请求还有多少 token 能命中。灰色小点是我们真实跑出来的五个数据点。
+    </p>
+
+    <div class="demo card">
+      <div class="ctrls">
+        <span class="readout">差异出现位置</span>
+        <input type="range" id="ratio" min="0" max="100" value="51" step="1">
+        <span class="readout" id="ratioOut">51%</span>
+      </div>
+      <div class="cursorline">
+        <i id="cursor" style="left:51%"></i>
+        <div class="dots" id="dots"></div>
+      </div>
+      <p class="note" style="margin-top:-2px">
+        <span style="color:var(--cy)">■</span> 青点 = 真实实测点（每个位置我们真的调了一次 API，读了 <code>usage</code> 字段）；
+        中间位置为插值，标注在数字框里。
+      </p>
+
+      <div class="grid g2" style="margin-top:20px">
+        <div>
+          <div class="prefixviz">
+            <div class="head"><span>请求体 · 按 token 近似排版</span><span id="vizState">命中 1152 / 共 2665</span></div>
+            <div class="body" id="vizBody"></div>
+          </div>
+        </div>
+        <div>
+          <div class="numrow" style="margin-top:0">
+            <div class="num g"><div class="k">命中 tokens</div><div class="v" id="nHit">1152</div></div>
+            <div class="num o"><div class="k">未命中 tokens</div><div class="v" id="nMiss">1513</div></div>
+            <div class="num c"><div class="k">命中率</div><div class="v" id="nRatio">43.2%</div></div>
+            <div class="num r"><div class="k">本次输入成本</div><div class="v" id="nCost">$0.000230</div></div>
+          </div>
+          <div class="bars">
+            <div class="bar"><span class="lbl">有缓存</span><span class="track"><span class="fill" id="barA" style="background:linear-gradient(90deg,var(--gr),var(--cy))"></span></span><span class="val" id="barAv">$0.000230</span></div>
+            <div class="bar"><span class="lbl">无缓存</span><span class="track"><span class="fill" id="barB" style="background:linear-gradient(90deg,var(--rd),var(--or))"></span></span><span class="val" id="barBv">$0.000400</span></div>
+          </div>
+          <p class="small dim" id="interpNote" style="margin-top:12px"></p>
+          <p class="small dim" style="margin-bottom:0">
+            成本按官方优惠时段单价换算：命中 <code>$0.003</code>/1M、未命中 <code>$0.15</code>/1M。
+            这里只算输入，不含输出。
+          </p>
+        </div>
+      </div>
+
+      <h3>五个实测点连起来是一条直线</h3>
+      <div style="border:1px solid var(--line);border-radius:12px;background:#060912;padding:8px 10px 2px">
+        <svg id="chart" viewBox="0 0 720 260" width="100%" height="auto" role="img"
+             aria-label="差异位置与命中 token 数的关系图"></svg>
+      </div>
+      <p class="small dim" style="margin-top:12px">
+        实测数据：差异出现在 11% → 命中 128；31% → 640；51% → 1152；76% → 1792；96% → 2304。
+        五个值恰好<b>全是 64 的整数倍</b>（2、10、18、28、36 个 64），推测服务端按 64 token 为单位对齐。
+        注意 11% 处只命中 128，而不是 11% × 2432 ≈ 267：<b>字符位置的比例并不等于 token 位置的比例</b>
+        （中文正文里两者换算关系不恒定），所以本页的可视化不拿公式硬算，而是
+        <b>以这五个实测点为锚、锚点之间线性插值</b>——滑块停在实测点上时，页面数字与实验记录逐位一致。
+      </p>
+    </div>
+  </div>
+</section>
+
+<!-- ================= 3. DEMO 2 ================= -->
+<section id="demo2">
+  <div class="wrap">
+    <div class="kicker">03 · 交互实测</div>
+    <h2>多轮对话里，前缀是「长出来」的</h2>
+    <p class="lead">
+      第一轮从零开始，没有可命中的东西；第二轮把第一轮的输入完整复用了，命中直接跳到 90% 以上。
+      点下面的按钮，看每一步的真实 <code>usage</code>。
+    </p>
+
+    <div class="demo card">
+      <div class="ctrls">
+        <button class="tabbtn" data-turn="1">第 1 轮</button>
+        <button class="tabbtn" data-turn="2">第 2 轮</button>
+        <button class="tabbtn" data-turn="3">第 3 轮</button>
+        <button class="tabbtn" data-turn="4">前缀中段改一个词</button>
+        <span class="readout" id="turnOut"></span>
+      </div>
+      <div class="numrow" style="margin-top:6px">
+        <div class="num"><div class="k">prompt tokens</div><div class="v" id="tPrompt">2665</div></div>
+        <div class="num g"><div class="k">命中 hit</div><div class="v" id="tHit">0</div></div>
+        <div class="num r"><div class="k">未命中 miss</div><div class="v" id="tMiss">2665</div></div>
+        <div class="num c"><div class="k">命中率</div><div class="v" id="tRatio">0.0%</div></div>
+      </div>
+      <div class="bars" style="margin-top:14px">
+        <div class="bar"><span class="lbl">输入成本</span><span class="track"><span class="fill" id="tBar" style="background:linear-gradient(90deg,var(--gr),var(--cy))"></span></span><span class="val" id="tBarV"></span></div>
+      </div>
+      <p class="small dim" id="turnNote" style="margin-top:14px"></p>
+    </div>
+  </div>
+</section>
+
+<!-- ================= 4. 成本 ================= -->
+<section id="cost">
+  <div class="wrap">
+    <div class="kicker">04 · 成本模型</div>
+    <h2>把前缀稳定做成工程习惯，省的是真钱</h2>
+    <p class="lead">
+      下面这个计算器用的是官方单价和本页实测的命中率，不是比喻。拖动三个参数看结果。
+    </p>
+
+    <div class="card demo">
+      <div class="grid g3">
+        <div>
+          <div class="readout">稳定前缀长度 <b id="pLenV">2432</b> token</div>
+          <input type="range" id="pLen" min="256" max="16000" step="64" value="2432">
+        </div>
+        <div>
+          <div class="readout">请求次数 <b id="pReqV">100</b></div>
+          <input type="range" id="pReq" min="10" max="5000" step="10" value="100">
+        </div>
+        <div>
+          <div class="readout">每次新增 token <b id="pAddV">200</b></div>
+          <input type="range" id="pAdd" min="50" max="2000" step="50" value="200">
+        </div>
+      </div>
+      <div class="numrow">
+        <div class="num r"><div class="k">无缓存（全量重算）</div><div class="v" id="cNo">$0.0425</div></div>
+        <div class="num g"><div class="k">前缀稳定（命中）</div><div class="v" id="cYes">$0.0067</div></div>
+        <div class="num c"><div class="k">省下</div><div class="v" id="cSave">83.7%</div></div>
+        <div class="num v"><div class="k">倍数</div><div class="v" id="cX">0.16x</div></div>
+      </div>
+      <p class="small dim" style="margin-top:14px">
+        单价（每 1M tokens，优惠时段）：未命中输入 <code>$0.15</code>、命中输入 <code>$0.003</code>、输出 <code>$0.6</code>。
+        输出按每次 50 token 计。命中率固定取实测的完整命中值 2432 token。
+      </p>
+      <blockquote>
+        <p>实测那次 14 个请求：实花 <b>$0.002307</b>；如果完全没命中缓存，同样的 token 要 <b>$0.005355</b>。
+        这还只是一个 2.4K 前缀的小实验——生产里挂着一个几万 token 的知识库时，倍数一样，绝对金额差得很远。</p>
+      </blockquote>
+    </div>
+  </div>
+</section>
+
+<!-- ================= 5. 工程清单 ================= -->
+<section id="practice">
+  <div class="wrap">
+    <div class="kicker">05 · 工程清单</div>
+    <h2>让前缀稳定下来的六条做法</h2>
+    <p class="lead">每一条都标了来源：官方文档，或者我们在 Hermes Agent 源码里看到的真实实现。</p>
+
+    <ol class="check">
+      <li>
+        <b>把不变的东西全部放前面，把每轮会变的挤到最后。</b>
+        系统提示词、工具定义、知识库、few-shot 例子在最前，本轮提问在最后。这是我们实测里 90%+ 命中的来源。
+        <span class="tag ds">DeepSeek 文档</span><span class="tag an">Anthropic 文档</span>
+      </li>
+      <li>
+        <b>绝不要在前缀里放时间戳、随机 id、请求序号、<code>datetime.now()</code>。</b>
+        它们每轮都变，而且位置一旦靠前，后面所有内容全部作废——实测里我们只在 11% 处改了一个数字，命中就只剩 128 token。
+        <span class="tag ds">实测</span>
+      </li>
+      <li>
+        <b>工具定义 / few-shot 例子的顺序和序列化格式必须固定。</b>
+        同一个工具集打乱顺序、或者 dict 键顺序变了，字节就变了，前缀判定为不同。
+        <span class="tag an">Anthropic 文档</span>
+      </li>
+      <li>
+        <b>多轮对话里不要回头改写历史消息。</b>
+        压缩上下文、动态插入记忆、热更新系统提示词都属于「重写前缀」，会让整段缓存作废。
+        <span class="tag he">Hermes 源码</span>
+      </li>
+      <li>
+        <b>把大而稳定的脚手架和易变尾部在同一段文本里显式分开。</b>
+        与其在运行时用分隔符去猜「边界在哪」，不如让构建这段文本的代码自己声明边界。
+        <span class="tag he">Hermes 源码</span>
+      </li>
+      <li>
+        <b>用 <code>usage</code> 里的命中字段做监控，而不是凭感觉。</b>
+        DeepSeek 返回 <code>prompt_cache_hit_tokens</code> / <code>prompt_cache_miss_tokens</code>；
+        Anthropic 的 <code>usage</code> 里有 cache write / read 两类计数。命中率掉了就是有人动了前缀。
+        <span class="tag ds">DeepSeek 文档</span><span class="tag an">Anthropic 文档</span>
+      </li>
+    </ol>
+  </div>
+</section>
+
+<!-- ================= 6. 反刍 ================= -->
+<section id="source">
+  <div class="wrap">
+    <div class="kicker">06 · 反刍</div>
+    <h2>然后我们去看了一眼 Hermes Agent 自己的实现</h2>
+    <p class="lead">
+      任务书要求「看源码，对照你刚才踩的坑」。踩的坑是：<b>前缀中段一改，命中归零</b>，
+      而且运行时想用启发式去猜「稳定边界在哪」很容易猜错。Hermes 的做法正好是这条坑的反面——
+      它不让运行时去猜，而是让<b>构建者显式声明</b>。
+    </p>
+
+    <div class="grid g2">
+      <div class="card">
+        <h3 style="margin-top:0">① 缓存是有「不变量」地位的</h3>
+        <p class="small">
+          在 hermes-agent 仓库根目录的 <code>AGENTS.md</code> 里，第一条设计不变量就是它：
+        </p>
+        <pre><span class="c">// hermes-agent/AGENTS.md</span>
+<span class="k">Per-conversation prompt caching is sacred.</span>
+A long-lived conversation reuses a cached prefix every
+turn. Anything that mutates past context, swaps
+toolsets, reloads memories, or rebuilds the system
+prompt mid-conversation invalidates that cache and
+multiplies the user's cost.
+<span class="c">// 唯一的例外：上下文压缩（compression）</span></pre>
+        <p class="small dim" style="margin-bottom:0">
+          对应我们实测的第 4 条做法。差别是：我们在页面上把它写成建议，它把这条写成了代码约束——
+          改动历史的那些斜杠命令默认「下次会话生效」，要立刻生效得显式加 <code>--now</code>。
+        </p>
+      </div>
+
+      <div class="card">
+        <h3 style="margin-top:0">② 断点放在哪：四个位置，一个 TTL</h3>
+        <p class="small">
+          <code>agent/prompt_caching.py</code> 的模块注释直接写了默认布局：
+        </p>
+        <pre><span class="c">// agent/prompt_caching.py</span>
+<span class="s">"""Anthropic prompt caching strategy — pure functions.</span>
+Default layout: <span class="k">4 cache_control breakpoints</span> — the static
+system prefix, the end of the system prompt, and the
+last 2 non-system messages (without a static prefix:
+one system breakpoint plus the last 3 messages).
+All markers share one TTL (5m or 1h).
+<span class="s">"""</span></pre>
+        <p class="small dim" style="margin-bottom:0">
+          这几行解释了「缓存该切在哪」的工程答案：<b>放在稳定段的末尾，而不是每轮都在动的头上</b>。
+          和实测里「命中只到第一个差异为止」是同一件事的两面。
+        </p>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:18px">
+      <h3 style="margin-top:0">③ 最漂亮的一处：不让运行时猜边界</h3>
+      <p class="small">
+        技能/定时任务把一大段静态脚手架和一小段易变尾部拼成<b>一个</b> user 消息字符串。
+        问题是：运行时看到这串字符，怎么知道尾部从哪开始？<code>agent/prompt_cache_boundary.py</code> 的答案是不猜：
+      </p>
+      <pre><span class="c"># agent/prompt_cache_boundary.py</span>
+<span class="s">"""Builder-declared stable prefixes for Anthropic prompt caching.</span>
+
+Skill/webhook/cron builders concatenate a large static scaffold
+with a small volatile tail into one user-message string. <span class="k">Only the
+builder knows where the tail begins</span>, so it registers the stable
+prefix here and the cache planner places a breakpoint at that
+boundary. <span class="k">Re-parsing marker strings at request time is deliberately
+avoided</span>: markers can legitimately appear inside skill bodies, and any
+delimiter heuristic then shrinks the cached prefix or absorbs volatile
+bytes.
+<span class="s">"""</span>
+
+<span class="k">def</span> register_stable_prefix(prefix: str) -&gt; None: ...
+<span class="k">def</span> find_stable_prefix(content: str) -&gt; Optional[str]: ...</pre>
+      <p class="small" style="margin-bottom:0">
+        这段注释和我们的实测是同一个故事的另一端：<b>启发式猜边界，猜错的代价是把易变字节吸进缓存前缀
+        （于是每次都 miss），或者把稳定字节排除在外（于是白付钱）</b>。
+        所以它选择让 <code>agent/skill_commands.py</code> 在拼字符串时顺手 <code>register_stable_prefix()</code>，
+        缓存规划器再把断点打在那个边界上。
+      </p>
+    </div>
+
+    <div class="card warn" style="margin-top:18px">
+      <h3 style="margin-top:0">对照自己踩的坑</h3>
+      <table>
+        <thead><tr><th>我们实测踩到的</th><th>Hermes 源码里的应对</th></tr></thead>
+        <tbody>
+          <tr><td>前缀中段改一个词 → 命中率从 91.3% 掉到 0%</td>
+              <td>把「不改历史」写成不变量，改历史的命令默认延迟到下次会话生效</td></tr>
+          <tr><td>命中只到第一个差异为止，且按 64 token 向下取整</td>
+              <td>断点显式打在稳定段末尾；缓存规划器只在这些位置切</td></tr>
+          <tr><td>运行时用分隔符猜「稳定边界」会猜错</td>
+              <td>由构建者显式 <code>register_stable_prefix()</code> 声明，禁止运行时重新解析</td></tr>
+          <tr><td>压缩上下文会让整段缓存作废</td>
+              <td>压缩会换物理 <code>session_id</code>，于是另建「轮换稳定」的缓存 scope，映射回压缩谱系的根</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- ================= 7. 结论与引用 ================= -->
+<section id="refs">
+  <div class="wrap">
+    <div class="kicker">07 · 结论</div>
+    <h2>这个知识点该用哪一层解决？</h2>
+    <div class="grid g2">
+      <div class="card">
+        <p style="margin-bottom:10px"><b>答案：Runtime（运行时 / 架构层），不是 Prompt 层。</b></p>
+        <p class="small">
+          写「请你保持前缀稳定」这种句子进 prompt 是没用的——模型不控制你的消息数组怎么拼。
+          真正决定命中率的是你的代码：谁在什么位置塞了时间戳、工具定义有没有稳定的序列化、
+          上下文压缩时动不动历史消息。这些都在运行时。
+        </p>
+        <p class="small" style="margin-bottom:0">
+          所以我们把第 3 条到第 6 条写成了工程约束（清单里的「工程清单」一节），
+          而不是写进给模型的提示词里。
+        </p>
+      </div>
+      <div class="card">
+        <h3 style="margin-top:0">一手资料</h3>
+        <ul style="padding-left:20px;margin:0;font-size:14px">
+          <li><a href="https://api-docs.deepseek.com/zh-cn/guides/kv_cache" target="_blank" rel="noopener">DeepSeek · 上下文硬盘缓存</a>
+            ——缓存前缀单元、落盘时机（请求结束位置 / 公共前缀检测 / 固定 token 间隔）、<code>usage</code> 字段</li>
+          <li><a href="https://api-docs.deepseek.com/quick_start/pricing" target="_blank" rel="noopener">DeepSeek · 模型与定价</a>
+            ——cache hit / miss / output 单价</li>
+          <li><a href="https://docs.claude.com/en/docs/build-with-claude/prompt-caching" target="_blank" rel="noopener">Anthropic · Prompt caching</a>
+            ——显式 <code>cache_control</code>、5m / 1h TTL、写入 1.25x / 读取 0.1x 的定价倍率、缓存隔离</li>
+          <li>Hermes Agent 源码（本机安装目录）：<code>agent/prompt_caching.py</code>、
+            <code>agent/prompt_cache_boundary.py</code>、<code>agent/skill_commands.py</code>、仓库根 <code>AGENTS.md</code></li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:18px">
+      <h3 style="margin-top:0">实测环境与复现方式</h3>
+      <table>
+        <tbody>
+          <tr><td style="width:190px">模型 / 日期</td><td class="mono">deepseek-flash · 2026-09-22</td></tr>
+          <tr><td>接口</td><td class="mono">POST https://api.deepseek.com/chat/completions</td></tr>
+          <tr><td>参数</td><td class="mono">temperature=0, max_tokens=16, stream=false</td></tr>
+          <tr><td>调用次数</td><td class="mono">14 次（smoke 1 + 多轮 3 + 改词 4 + 位置扫描 6）</td></tr>
+          <tr><td>原始数据</td><td class="mono">experiments/results-20260922-172537.json<br>experiments/results-20260922-172553.json</td></tr>
+          <tr><td>探针脚本</td><td class="mono">experiments/cache_probe.py　（python cache_probe.py deepseek-flash all）</td></tr>
+          <tr><td>汇总脚本</td><td class="mono">experiments/aggregate.py　→　research/experiment-log.md</td></tr>
+          <tr><td>本次总花费</td><td class="mono">$0.002307（命中 20736 / 未命中 14002 / 输出 240 token）</td></tr>
+        </tbody>
+      </table>
+      <p class="small dim" style="margin-bottom:0">
+        复现方式：仓库里 <code>cp .env.example .env</code> 填入自己的 DeepSeek key，再跑上面两条命令，
+        会得到同量级的命中数字（缓存是否命中取决于服务端当时的存活状态，绝对值会有出入）。
+        <b>不要把带 key 的 .env 提交进仓库。</b>
+      </p>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <p style="margin:0">
+      LMAPI 知识网页 · 子任务 C（Prompt Caching / Prefix）· 所有数字来自本机真实 API 调用，
+      插值处已在页内标注。<span class="dim">单文件、离线可开、无外部依赖。</span>
+    </p>
+  </div>
+</footer>
+
+<script>
+/* ============================================================
+   全部数据来自实测（experiments/results-*.json），不要在这里手改数字。
+   ============================================================ */
+const MEASURED = {
+  prefixTokens: 2432,      // 实测命中的稳定前缀长度
+  totalTokens: 2665,       // 实测首次请求的 prompt_tokens
+  unit: 64,                // 实测发现：命中按 64 token 向下取整
+  sweep: [                 // 差异位置扫描（全部实测）
+    {ratio: 0.11, hit: 128},
+    {ratio: 0.31, hit: 640},
+    {ratio: 0.51, hit: 1152},
+    {ratio: 0.76, hit: 1792},
+    {ratio: 0.96, hit: 2304}
+  ],
+  turns: [
+    {n: 1, label: "首次请求", prompt: 2665, hit: 0,    miss: 2665,
+     note: "缓存里什么都没有，全部按未命中计价。"},
+    {n: 2, label: "第二轮：前缀完整复用", prompt: 2687, hit: 2432, miss: 255,
+     note: "第一轮的输入结束位置已经落盘，这次从第一个 token 开始逐个匹配成功——包括 system 和整段资料。剩下的 255 token 是本轮新增的提问和落盘边界。"},
+    {n: 3, label: "第三轮：前缀继续增长", prompt: 2701, hit: 2560, miss: 141,
+     note: "命中爬到 94.8%。多轮对话越长，稳定前缀的占比越高，单轮边际成本越低。"},
+    {n: 4, label: "前缀中段改一个词", prompt: 2665, hit: 0, miss: 2665,
+     note: "把资料里的「返利结构」改成「返利机制」（出现在文档前段）。只差一个词，但差异之后的内容全部作废：命中率 91.3% → 0%。"}
+  ],
+  price: {            // 美元 / 1M tokens，DeepSeek 官方定价（优惠时段）
+    hit: 0.003, miss: 0.15, out: 0.6
+  },
+  experiment: {calls: 14, cost: 0.002307, costNoCache: 0.005355}
+};
+
+const T = MEASURED.totalTokens;
+
+/* ---------- 工具函数 ---------- */
+const fmtInt = n => n.toLocaleString("en-US");
+const fmtUsd = v => "$" + v.toFixed(6);
+const fmtUsdShort = v => "$" + (v >= 0.01 ? v.toFixed(4) : v.toFixed(6));
+function costOf(hit, miss, out = 0){
+  return (hit * MEASURED.price.hit + miss * MEASURED.price.miss + out * MEASURED.price.out) / 1e6;
+}
+
+/* ============================================================
+   DEMO 1：差异位置 -> 命中崩塌
+   插值规则：命中 = floor(ratio × 2432 / 64) × 64（与实测五点一致的模型）
+   ============================================================ */
+const $ = id => document.getElementById(id);
+
+/* v2 修：第一版用「ratio × 2432 再按 64 对齐」当公式，结果滑块停在实测点 51% 时
+   页面显示 1,216，而实测是 1,152（11% 处 256 vs 实测 128）——字符位置比例并不等于
+   token 位置比例，同一个位置出现两个数字，违反「数字必须与实测一致」的硬约束。
+   现在改成以五个实测点为锚的分段线性插值：锚点处逐位复现实测值，锚点之间才叫插值。 */
+const ANCHORS = MEASURED.sweep.concat([{ratio: 0, hit: 0}, {ratio: 1, hit: MEASURED.prefixTokens}])
+  .sort((a, b) => a.ratio - b.ratio);
+
+function hitAt(ratio){
+  const r = Math.max(0, Math.min(1, ratio));
+  for (let i = 0; i < ANCHORS.length - 1; i++){
+    const a = ANCHORS[i], b = ANCHORS[i + 1];
+    if (r >= a.ratio && r <= b.ratio){
+      const t = (b.ratio - a.ratio) ? (r - a.ratio) / (b.ratio - a.ratio) : 0;
+      return Math.floor((a.hit + t * (b.hit - a.hit)) / MEASURED.unit) * MEASURED.unit;
+    }
+  }
+  return MEASURED.prefixTokens;
+}
+
+/* 返回包含该比例的两个实测锚点，用于向读者交代「插值是加在哪两点之间」 */
+function bracket(r){
+  for (let i = 0; i < ANCHORS.length - 1; i++){
+    if (r >= ANCHORS[i].ratio && r <= ANCHORS[i + 1].ratio) return [ANCHORS[i], ANCHORS[i + 1]];
+  }
+  return [ANCHORS[ANCHORS.length - 2], ANCHORS[ANCHORS.length - 1]];
+}
+
+function nearestMeasured(ratioPct){
+  let best = null;
+  MEASURED.sweep.forEach(p => {
+    const d = Math.abs(p.ratio * 100 - ratioPct);
+    if (best === null || d < best.d) best = {d, p};
+  });
+  return best.p;
+}
+
+/* 前缀正文的示意文本（结构与实测一致，正文为节选示意） */
+const DOC_HEAD = "【内部资料·财务与渠道分析】\n";
+const DOC_LINE = "第三季度华东区渠道库存周转天数为 47 天，较上季度环比变化 -3%，主因是经销商备货节奏与终端动销不匹配，建议在下一采购周期调整返利结构。";
+const DOC_TAIL = "\n……（共 60 条同构段落，约 2400 token）\n\n";
+const DOC_Q = "请分析这份资料的现金流情况。";
+
+function renderViz(ratio){
+  const viz = $("vizBody");
+  const keep = ratio;                         // 命中区占比（按位置近似）
+  const head = DOC_HEAD;
+  const chunk = DOC_LINE.repeat(3);
+  const mid = chunk + "\n" + chunk + "\n";
+  const cut = Math.max(0, Math.min(1, keep));
+  const cutChars = Math.round(mid.length * cut);
+  viz.innerHTML =
+    '<span class="mark-hit">' + head + mid.slice(0, cutChars) + '</span>' +
+    '<span class="mark-bad">' + mid.slice(cutChars, mid.length + 1) + DOC_TAIL + DOC_Q + '</span>';
+}
+
+function updateDemo1(){
+  const pct = Number($("ratio").value);
+  const ratio = pct / 100;
+  const hit = hitAt(ratio);
+  const miss = T - hit;
+  const withCache = costOf(hit, miss);
+  const noCache = costOf(0, T);
+  const near = nearestMeasured(pct);
+  const isMeasured = Math.abs(near.ratio * 100 - pct) < 0.6;
+
+  $("ratioOut").textContent = pct + "%";
+  $("cursor").style.left = pct + "%";
+  $("nHit").textContent = fmtInt(hit);
+  $("nMiss").textContent = fmtInt(miss);
+  $("nRatio").textContent = (hit / T * 100).toFixed(1) + "%";
+  $("nCost").textContent = fmtUsd(withCache);
+  $("vizState").textContent = "命中 " + fmtInt(hit) + " / 共 " + fmtInt(T);
+
+  // v2 修：条形图原来左条画的是「命中占比」，但标签写的是成本倍数，两者对不上。
+  // 现在两条都按「成本相对无缓存的比例」画，条长和右侧百分比直接可比。
+  const wA = (withCache / noCache) * 100, wB = 100;
+  $("barA").style.width = Math.max(wA, 1.2) + "%";
+  $("barB").style.width = wB + "%";
+  $("barAv").textContent = fmtUsd(withCache) + "  (相对 " + (withCache / noCache).toFixed(2) + "x)";
+  $("barBv").textContent = fmtUsd(noCache);
+
+  const [lo, hi] = bracket(ratio);
+  $("interpNote").textContent = isMeasured
+    ? "当前位置就是实测点：差异 " + (near.ratio * 100).toFixed(0) + "% → 命中 " + fmtInt(near.hit)
+      + " token，这个值是那次真实 API 调用返回的 usage 字段。"
+    : "当前位置是插值：在实测点 " + (lo.ratio * 100).toFixed(0) + "% → " + fmtInt(lo.hit)
+      + " 与 " + (hi.ratio * 100).toFixed(0) + "% → " + fmtInt(hi.hit)
+      + " 之间线性过渡，再按实测观察到的 64 对齐向下取整。";
+
+  renderViz(ratio);
+
+  // 实测点标记
+  document.querySelectorAll("#dots s").forEach((el, i) => {
+    el.classList.toggle("on", Math.abs(MEASURED.sweep[i].ratio * 100 - pct) < 0.6);
+  });
+
+  // 滑块位置同步到图表竖线
+  const vm = $("vline");
+  if (vm) vm.setAttribute("x1", 60 + (720 - 60 - 40) * ratio), vm.setAttribute("x2", 60 + (720 - 60 - 40) * ratio);
+}
+
+/* ============================================================
+   DEMO 2：多轮生长
+   ============================================================ */
+function updateTurn(n){
+  const t = MEASURED.turns[n - 1];
+  $("tPrompt").textContent = fmtInt(t.prompt);
+  $("tHit").textContent = fmtInt(t.hit);
+  $("tMiss").textContent = fmtInt(t.miss);
+  $("tRatio").textContent = (t.hit / t.prompt * 100).toFixed(1) + "%";
+  const c = costOf(t.hit, t.miss);
+  const cNo = costOf(0, t.prompt);
+  $("tBar").style.width = Math.max(t.hit / t.prompt * 100, 0.6) + "%";
+  $("tBarV").textContent = fmtUsd(c) + "   未缓存 " + fmtUsd(cNo);
+  $("turnOut").textContent = t.label;
+  $("turnNote").textContent = t.note;
+  document.querySelectorAll(".tabbtn").forEach(b =>
+    b.classList.toggle("on", Number(b.dataset.turn) === n));
+}
+
+/* ============================================================
+   DEMO 3：成本计算器
+   ============================================================ */
+function updateCost(){
+  const len = Number($("pLen").value);
+  const req = Number($("pReq").value);
+  const add = Number($("pAdd").value);
+  const outPer = 50;
+  const noCache = costOf(0, (len + add) * req, outPer * req);
+  const withCache = costOf(len * req, add * req, outPer * req);
+  $("pLenV").textContent = fmtInt(len);
+  $("pReqV").textContent = fmtInt(req);
+  $("pAddV").textContent = fmtInt(add);
+  $("cNo").textContent = fmtUsdShort(noCache);
+  $("cYes").textContent = fmtUsdShort(withCache);
+  $("cSave").textContent = ((1 - withCache / noCache) * 100).toFixed(1) + "%";
+  $("cX").textContent = (withCache / noCache).toFixed(2) + "x";
+}
+
+/* ============================================================
+   实测点折线图（手写 SVG，无依赖）
+   ============================================================ */
+function drawChart(){
+  const svg = $("chart");
+  const W = 720, H = 260, L = 60, R = 40, Tp = 24, B = 44;
+  const x = r => L + (W - L - R) * r;
+  const maxHit = MEASURED.prefixTokens;
+  const y = h => (H - B) - (H - B - Tp) * (h / maxHit);
+  let s = "";
+
+  // 网格与刻度
+  [0, 0.25, 0.5, 0.75, 1].forEach(r => {
+    s += `<line x1="${x(r)}" y1="${Tp}" x2="${x(r)}" y2="${H - B}" stroke="#1b2438" stroke-width="1"/>`;
+    s += `<text x="${x(r)}" y="${H - B + 20}" fill="#6b7a99" font-size="11" text-anchor="middle" font-family="monospace">${r * 100}%</text>`;
+  });
+  [0, 1216, 2432].forEach(h => {
+    s += `<line x1="${L}" y1="${y(h)}" x2="${W - R}" y2="${y(h)}" stroke="#1b2438" stroke-width="1"/>`;
+    s += `<text x="${L - 10}" y="${y(h) + 4}" fill="#6b7a99" font-size="11" text-anchor="end" font-family="monospace">${h}</text>`;
+  });
+
+  // 只画一条「真值线」：五个实测点之间的分段线性连线（v2 修：删掉了原来那条
+  // 用理论公式算出来的虚线，避免同一条曲线上出现两套互相矛盾的数）
+  let md = "";
+  ANCHORS.forEach((p, i) => {
+    md += (i ? " L " : "M ") + x(p.ratio) + " " + y(p.hit);
+  });
+  s += `<path d="${md}" fill="none" stroke="#22d3a5" stroke-width="2.5"/>`;
+  MEASURED.sweep.forEach(p => {
+    s += `<circle cx="${x(p.ratio)}" cy="${y(p.hit)}" r="5.5" fill="#05070c" stroke="#22d3a5" stroke-width="2.5"/>`;
+    s += `<text x="${x(p.ratio)}" y="${y(p.hit) - 14}" fill="#9df3d8" font-size="11.5" text-anchor="middle" font-family="monospace">${p.hit}</text>`;
+  });
+
+  // 当前滑块竖线
+  const ratio = Number($("ratio").value) / 100;
+  s += `<line id="vline" x1="${x(ratio)}" y1="${Tp}" x2="${x(ratio)}" y2="${H - B}" stroke="#ffa53e" stroke-width="1.5" stroke-dasharray="3 3"/>`;
+
+  // 轴标签
+  s += `<text x="${(W) / 2}" y="${H - 8}" fill="#9aa8c4" font-size="12" text-anchor="middle">第一个差异出现的位置（占前缀）</text>`;
+  s += `<text x="16" y="${Tp + 8}" fill="#9aa8c4" font-size="12" transform="rotate(-90 16 ${Tp + 8})" text-anchor="end">命中 token 数</text>`;
+  s += `<text x="${L}" y="${Tp - 8}" fill="#6b7a99" font-size="11" font-family="monospace">● 五个实测点　━━ 锚点之间线性插值（页面会标注「插值」）</text>`;
+
+  svg.innerHTML = s;
+}
+
+/* ---------- 事件绑定 ---------- */
+$("ratio").addEventListener("input", updateDemo1);
+["pLen", "pReq", "pAdd"].forEach(id => $(id).addEventListener("input", updateCost));
+document.querySelectorAll(".tabbtn").forEach(b =>
+  b.addEventListener("click", () => updateTurn(Number(b.dataset.turn))));
+
+/* 实测点小点标记 */
+(function initDots(){
+  const dots = $("dots");
+  MEASURED.sweep.forEach(p => {
+    const s = document.createElement("s");
+    s.style.left = (p.ratio * 100) + "%";
+    dots.appendChild(s);
+  });
+})();
+
+/* v2 修：按钮样式已移进页面顶部 CSS 块，不再用 JS 注入样式
+   （原来那样首屏会闪一下没有任何样式的默认按钮） */
+
+/* 启动 */
+updateDemo1();
+updateTurn(2);
+updateCost();
+drawChart();
+</script>
+</body>
+</html>

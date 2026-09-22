@@ -1,0 +1,94 @@
+{
+  "model": "deepseek-flash",
+  "stage": "all",
+  "runs": [
+    {
+      "label": "smoke",
+      "model": "deepseek-flash",
+      "prompt_tokens": 35,
+      "prompt_cache_hit_tokens": 0,
+      "prompt_cache_miss_tokens": 35,
+      "completion_tokens": 32,
+      "reasoning_tokens": 32,
+      "latency_s": 0.94,
+      "hit_ratio": 0.0
+    },
+    {
+      "label": "1-首次请求（长前缀，预期 miss）",
+      "model": "deepseek-flash",
+      "prompt_tokens": 2665,
+      "prompt_cache_hit_tokens": 0,
+      "prompt_cache_miss_tokens": 2665,
+      "completion_tokens": 16,
+      "reasoning_tokens": 16,
+      "latency_s": 0.65,
+      "hit_ratio": 0.0
+    },
+    {
+      "label": "2-第二轮：前缀完全复用（预期 hit）",
+      "model": "deepseek-flash",
+      "prompt_tokens": 2687,
+      "prompt_cache_hit_tokens": 2432,
+      "prompt_cache_miss_tokens": 255,
+      "completion_tokens": 16,
+      "reasoning_tokens": 16,
+      "latency_s": 0.65,
+      "hit_ratio": 0.9051
+    },
+    {
+      "label": "3-第三轮：前缀继续增长（预期 hit 更多）",
+      "model": "deepseek-flash",
+      "prompt_tokens": 2701,
+      "prompt_cache_hit_tokens": 2560,
+      "prompt_cache_miss_tokens": 141,
+      "completion_tokens": 16,
+      "reasoning_tokens": 16,
+      "latency_s": 0.47,
+      "hit_ratio": 0.9478
+    },
+    {
+      "label": "A-长文本问答第 1 次（预期 miss）",
+      "model": "deepseek-flash",
+      "prompt_tokens": 2665,
+      "prompt_cache_hit_tokens": 2432,
+      "prompt_cache_miss_tokens": 233,
+      "completion_tokens": 16,
+      "reasoning_tokens": 16,
+      "latency_s": 0.94,
+      "hit_ratio": 0.9126
+    },
+    {
+      "label": "B-尾问换了词（前缀同，预期本次仍 miss 或部分 hit）",
+      "model": "deepseek-flash",
+      "prompt_tokens": 2665,
+      "prompt_cache_hit_tokens": 2432,
+      "prompt_cache_miss_tokens": 233,
+      "completion_tokens": 16,
+      "reasoning_tokens": 16,
+      "latency_s": 0.61,
+      "hit_ratio": 0.9126
+    },
+    {
+      "label": "C-第三次：公共前缀应已落盘（预期 hit）",
+      "model": "deepseek-flash",
+      "prompt_tokens": 2665,
+      "prompt_cache_hit_tokens": 2432,
+      "prompt_cache_miss_tokens": 233,
+      "completion_tokens": 16,
+      "reasoning_tokens": 16,
+      "latency_s": 0.65,
+      "hit_ratio": 0.9126
+    },
+    {
+      "label": "D-把前缀里一个词改掉（预期 hit 崩塌）",
+      "model": "deepseek-flash",
+      "prompt_tokens": 2665,
+      "prompt_cache_hit_tokens": 0,
+      "prompt_cache_miss_tokens": 2665,
+      "completion_tokens": 16,
+      "reasoning_tokens": 16,
+      "latency_s": 0.86,
+      "hit_ratio": 0.0
+    }
+  ]
+}

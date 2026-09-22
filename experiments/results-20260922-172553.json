@@ -1,0 +1,77 @@
+{
+  "model": "deepseek-flash",
+  "stage": "position",
+  "runs": [
+    {
+      "label": "warmup-预热（预期 hit 高）",
+      "model": "deepseek-flash",
+      "prompt_tokens": 2665,
+      "prompt_cache_hit_tokens": 2432,
+      "prompt_cache_miss_tokens": 233,
+      "completion_tokens": 16,
+      "reasoning_tokens": 16,
+      "latency_s": 0.67,
+      "hit_ratio": 0.9126
+    },
+    {
+      "label": "diff@char10%",
+      "model": "deepseek-flash",
+      "prompt_tokens": 2665,
+      "prompt_cache_hit_tokens": 128,
+      "prompt_cache_miss_tokens": 2537,
+      "completion_tokens": 16,
+      "reasoning_tokens": 16,
+      "latency_s": 0.77,
+      "hit_ratio": 0.048,
+      "diff_char_ratio": 0.107
+    },
+    {
+      "label": "diff@char30%",
+      "model": "deepseek-flash",
+      "prompt_tokens": 2665,
+      "prompt_cache_hit_tokens": 640,
+      "prompt_cache_miss_tokens": 2025,
+      "completion_tokens": 16,
+      "reasoning_tokens": 16,
+      "latency_s": 0.58,
+      "hit_ratio": 0.2402,
+      "diff_char_ratio": 0.307
+    },
+    {
+      "label": "diff@char50%",
+      "model": "deepseek-flash",
+      "prompt_tokens": 2665,
+      "prompt_cache_hit_tokens": 1152,
+      "prompt_cache_miss_tokens": 1513,
+      "completion_tokens": 16,
+      "reasoning_tokens": 16,
+      "latency_s": 0.96,
+      "hit_ratio": 0.4323,
+      "diff_char_ratio": 0.506
+    },
+    {
+      "label": "diff@char75%",
+      "model": "deepseek-flash",
+      "prompt_tokens": 2665,
+      "prompt_cache_hit_tokens": 1792,
+      "prompt_cache_miss_tokens": 873,
+      "completion_tokens": 16,
+      "reasoning_tokens": 16,
+      "latency_s": 0.7,
+      "hit_ratio": 0.6724,
+      "diff_char_ratio": 0.755
+    },
+    {
+      "label": "diff@char95%",
+      "model": "deepseek-flash",
+      "prompt_tokens": 2665,
+      "prompt_cache_hit_tokens": 2304,
+      "prompt_cache_miss_tokens": 361,
+      "completion_tokens": 16,
+      "reasoning_tokens": 16,
+      "latency_s": 0.94,
+      "hit_ratio": 0.8645,
+      "diff_char_ratio": 0.955
+    }
+  ]
+}
